@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>IraFlow</title>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body,#root{height:100%;overflow:hidden}
+body{background:#dff2ef;color:#0d2830;font-family:'Nunito',sans-serif;font-size:14px}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#90cac4;border-radius:4px}
+input,select,textarea,button{font-family:'Nunito',sans-serif}
+input[type=range]{accent-color:#0694a2;cursor:pointer}
+input[type=date]::-webkit-calendar-picker-indicator,
+input[type=time]::-webkit-calendar-picker-indicator{opacity:.5;cursor:pointer}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useRef,useMemo}=React;
+
+const C={
+  bg:'#dff2ef',sur:'#ffffff',card:'#f2fbfa',brd:'#b8ddd8',brd2:'#d0ece8',
+  acc:'#0694a2',accL:'rgba(6,148,162,.1)',accM:'rgba(6,148,162,.2)',
+  grn:'#0e9f6e',grnL:'rgba(14,159,110,.1)',
+  red:'#e53e3e',redL:'rgba(229,62,62,.1)',
+  amb:'#d97706',ambL:'rgba(217,119,6,.1)',
+  blu:'#2563eb',bluL:'rgba(37,99,235,.1)',
+  pur:'#7c3aed',purL:'rgba(124,58,237,.1)',
+  pnk:'#db2777',pnkL:'rgba(219,39,119,.1)',
+  txt:'#0d2830',dim:'#3a6b76',mut:'#7ab5be',
+};
+
+const URGENCY=[
+  {id:'today',    lbl:'Today',     col:C.red, bg:C.redL},
+  {id:'tomorrow', lbl:'Tomorrow',  col:C.amb, bg:C.ambL},
+  {id:'week',     lbl:'This Week', col:C.acc, bg:C.accL},
+  {id:'longterm', lbl:'Long Term', col:C.mut, bg:'rgba(122,181,190,.12)'},
+];
+const TAG_PAL=[C.acc,C.grn,C.red,C.amb,C.pur,C.pnk,C.blu,'#0369a1','#065f46','#78350f','#4c1d95','#831843'];
+const BCOLS=[C.acc,C.grn,C.pur,C.amb,C.red,C.blu,C.pnk,'#0369a1'];
+const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+const MSHORT=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const WSHORT=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const DAYS_FULL=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+const EVT_COLS={Exam:C.red,Competition:C.amb,Deadline:C.pur,College:C.blu,Class:C.acc,Personal:C.grn,Other:C.mut};
+
+const uid=()=>Math.random().toString(36).slice(2,9);
+const todayStr=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
+const todayDOW=()=>{const d=new Date().getDay();return d===0?6:d-1;};
+const fmtDate=d=>{const x=new Date(d);return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`;};
+const getDIM=(y,m)=>new Date(y,m+1,0).getDate();
+const getFirstDOW=(y,m)=>{const d=new Date(y,m,1).getDay();return d===0?6:d-1;};
+const getWeekDates=base=>{
+  const d=new Date(base+'T12:00');
+  const dow=d.getDay()===0?6:d.getDay()-1;
+  const mon=new Date(d);mon.setDate(d.getDate()-dow);
+  return Array.from({length:7},(_,i)=>{const x=new Date(mon);x.setDate(mon.getDate()+i);return fmtDate(x);});
+};
+const st={
+  get:k=>{try{const v=localStorage.getItem('iraf_'+k);return v?JSON.parse(v):null;}catch{return null;}},
+  set:(k,v)=>{try{localStorage.setItem('iraf_'+k,JSON.stringify(v));}catch{}}
+};
+const IS=(x={})=>({background:C.sur,border:'1px solid '+C.brd,color:C.txt,padding:'8px 11px',borderRadius:8,fontSize:13,outline:'none',width:'100%',...x});
+const BtnA=(x={})=>({background:C.acc,color:'#fff',border:'none',padding:'8px 18px',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:700,fontFamily:'Nunito',...x});
+const BtnO=(x={})=>({background:'transparent',color:C.dim,border:'1px solid '+C.brd,padding:'7px 13px',borderRadius:8,cursor:'pointer',fontSize:13,fontFamily:'Nunito',...x});
+const Card=(x={})=>({background:C.sur,border:'1px solid '+C.brd,borderRadius:12,...x});
+
+function App(){
+  const [tab,setTab]=useState('tasks');
+  const td=todayStr();
+
+  const [tasks,setTasks]=useState(()=>st.get('tasks')||[]);
+  const [tags,setTags]=useState(()=>st.get('tags')||[]);
+  const [tagFilters,setTagFilters]=useState([]);
+  const [urgFilter,setUrgFilter]=useState(null);
+  useEffect(()=>st.set('tasks',tasks),[tasks]);
+  useEffect(()=>st.set('tags',tags),[tags]);
+
+  const [dayBlocks,setDayBlocks]=useState(()=>st.get('db_'+td)||[]);
+  const [classes,setClasses]=useState(()=>st.get('classes')||[]);
+  useEffect(()=>st.set('db_'+td,dayBlocks),[dayBlocks]);
+  useEffect(()=>st.set('classes',classes),[classes]);
+
+  const [events,setEvents]=useState(()=>st.get('events')||[]);
+  useEffect(()=>st.set('events',events),[events]);
+
+  const [pTotal,setPTotal]=useState(25*60);
+  const pRemain=useRef(25*60);
+  const [pDisp,setPDisp]=useState({m:25,s:0});
+  const [pRun,setPRun]=useState(false);
+  const [pDone,setPDone]=useState(()=>st.get('pd_'+td)||0);
+  const [pLog,setPLog]=useState(()=>st.get('pl_'+td)||[]);
+  const pTimer=useRef(null);
+  useEffect(()=>st.set('pd_'+td,pDone),[pDone]);
+  useEffect(()=>st.set('pl_'+td,pLog),[pLog]);
+
+  useEffect(()=>{
+    if(pRun){
+      pTimer.current=setInterval(()=>{
+        pRemain.current=Math.max(0,pRemain.current-1);
+        setPDisp({m:Math.floor(pRemain.current/60),s:pRemain.current%60});
+        if(pRemain.current===0){
+          clearInterval(pTimer.current);setPRun(false);
+          setPDone(n=>n+1);
+          setPLog(l=>[...l,{t:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),m:Math.round(pTotal/60)}]);
+          pRemain.current=pTotal;
+          setPDisp({m:Math.floor(pTotal/60),s:pTotal%60});
+        }
+      },1000);
+    }else clearInterval(pTimer.current);
+    return()=>clearInterval(pTimer.current);
+  },[pRun,pTotal]);
+
+  const setTimer=secs=>{
+    clearInterval(pTimer.current);setPRun(false);
+    setPTotal(secs);pRemain.current=secs;
+    setPDisp({m:Math.floor(secs/60),s:secs%60});
+  };
+
+  const TABS=[{id:'tasks',lbl:'Tasks'},{id:'day',lbl:'Day'},{id:'events',lbl:'Events'},{id:'focus',lbl:'Focus'}];
+  return(
+    <div style={{height:'100vh',display:'flex',flexDirection:'column',overflow:'hidden'}}>
+      <header style={{background:C.acc,display:'flex',alignItems:'center',padding:'0 20px',height:50,flexShrink:0,gap:16}}>
+        <div style={{display:'flex',alignItems:'center',gap:7,flexShrink:0}}>
+          <span style={{fontSize:17}}>🌊</span>
+          <span style={{fontWeight:800,fontSize:17,color:'#fff',letterSpacing:'-.3px'}}>IraFlow</span>
+        </div>
+        <div style={{display:'flex',gap:2,flex:1,justifyContent:'center'}}>
+          {TABS.map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)} style={{
+              background:tab===t.id?'rgba(255,255,255,.2)':'transparent',
+              color:tab===t.id?'#fff':'rgba(255,255,255,.6)',
+              border:'none',padding:'6px 22px',borderRadius:8,cursor:'pointer',
+              fontSize:13,fontWeight:tab===t.id?700:500,fontFamily:'Nunito',transition:'all .15s'
+            }}>{t.lbl}</button>
+          ))}
+        </div>
+        <div style={{fontSize:12,color:'rgba(255,255,255,.75)',flexShrink:0,fontWeight:600}}>
+          {new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long'})}
+        </div>
+      </header>
+      <div style={{flex:1,overflow:'hidden',display:'flex'}}>
+        {tab==='tasks'  && <TasksTab tasks={tasks} setTasks={setTasks} tags={tags} setTags={setTags} tagFilters={tagFilters} setTagFilters={setTagFilters} urgFilter={urgFilter} setUrgFilter={setUrgFilter}/>}
+        {tab==='day'    && <DayTab dayBlocks={dayBlocks} setDayBlocks={setDayBlocks} classes={classes} setClasses={setClasses} tasks={tasks}/>}
+        {tab==='events' && <EventsTab events={events} setEvents={setEvents}/>}
+        {tab==='focus'  && <FocusTab pDisp={pDisp} pRun={pRun} setPRun={setPRun} pTotal={pTotal} setTimer={setTimer} pDone={pDone} pLog={pLog} pRemain={pRemain}/>}
+      </div>
+    </div>
+  );
+}
+
+/* ══ TASKS ══ */
+function TasksTab({tasks,setTasks,tags,setTags,tagFilters,setTagFilters,urgFilter,setUrgFilter}){
+  const [showAdd,setShowAdd]=useState(false);
+  const [showTagMgr,setShowTagMgr]=useState(false);
+  const [showDone,setShowDone]=useState(false);
+  const [nt,setNt]=useState({name:'',color:TAG_PAL[0]});
+  const [f,setF]=useState({title:'',tags:[],urgency:'today',notes:''});
+  const [drag,setDrag]=useState(null);
+  const [over,setOver]=useState(null);
+  const urgOrd={today:0,tomorrow:1,week:2,longterm:3};
+
+  const addTask=()=>{
+    if(!f.title.trim())return;
+    setTasks(t=>[{id:uid(),...f,col:'todo',done:false,ts:Date.now()},...t]);
+    setF({title:'',tags:[],urgency:'today',notes:''});setShowAdd(false);
+  };
+  const addTag=()=>{
+    if(!nt.name.trim())return;
+    setTags(t=>[...t,{id:uid(),...nt}]);setNt({name:'',color:TAG_PAL[0]});
+  };
+  const moveTask=(id,to)=>setTasks(t=>t.map(x=>x.id===id?{...x,col:to,done:to==='done'}:x));
+  const delTask=id=>setTasks(t=>t.filter(x=>x.id!==id));
+  const toggleTF=id=>setTagFilters(f=>f.includes(id)?f.filter(x=>x!==id):[...f,id]);
+
+  const active=tasks.filter(t=>{
+    if(t.done)return false;
+    if(tagFilters.length>0&&!tagFilters.some(tf=>t.tags?.includes(tf)))return false;
+    if(urgFilter&&t.urgency!==urgFilter)return false;
+    return true;
+  });
+  const done=tasks.filter(t=>t.done);
+  const sortU=arr=>[...arr].sort((a,b)=>(urgOrd[a.urgency]||3)-(urgOrd[b.urgency]||3));
+  const todoT=sortU(active.filter(t=>t.col==='todo'));
+  const doingT=sortU(active.filter(t=>t.col==='doing'));
+
+  return(
+    <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+      {/* toolbar */}
+      <div style={{background:C.sur,borderBottom:'1px solid '+C.brd,padding:'9px 18px',display:'flex',gap:8,alignItems:'center',flexShrink:0,flexWrap:'wrap'}}>
+        <button style={BtnA({fontSize:12,padding:'6px 14px'})} onClick={()=>setShowAdd(x=>!x)}>+ Task</button>
+        <button style={BtnO({fontSize:12,padding:'5px 12px'})} onClick={()=>setShowTagMgr(x=>!x)}>🏷 Manage Tags</button>
+        <div style={{width:1,height:20,background:C.brd,margin:'0 2px'}}/>
+        <span style={{fontSize:11,color:C.mut,fontWeight:600}}>Filter:</span>
+        {tags.map(tag=>(
+          <Pill key={tag.id} label={tag.name} color={tag.color} active={tagFilters.includes(tag.id)} onClick={()=>toggleTF(tag.id)}/>
+        ))}
+        {tags.length>0&&<div style={{width:1,height:20,background:C.brd,margin:'0 2px'}}/>}
+        {URGENCY.map(u=>(
+          <Pill key={u.id} label={u.lbl} color={u.col} active={urgFilter===u.id} onClick={()=>setUrgFilter(urgFilter===u.id?null:u.id)}/>
+        ))}
+        <div style={{marginLeft:'auto',display:'flex',gap:8,alignItems:'center'}}>
+          {(tagFilters.length>0||urgFilter)&&<button onClick={()=>{setTagFilters([]);setUrgFilter(null);}} style={{background:'none',border:'none',color:C.mut,cursor:'pointer',fontSize:11,fontWeight:600}}>✕ Clear filters</button>}
+        </div>
+      </div>
+
+      {/* add form */}
+      {showAdd&&(
+        <div style={{background:C.card,borderBottom:'1px solid '+C.brd,padding:'13px 18px',flexShrink:0}}>
+          <div style={{display:'flex',gap:10,maxWidth:740}}>
+            <div style={{flex:1,display:'flex',flexDirection:'column',gap:8}}>
+              <input style={IS()} placeholder="What needs to be done?" value={f.title}
+                onChange={e=>setF({...f,title:e.target.value})} onKeyDown={e=>e.key==='Enter'&&addTask()} autoFocus/>
+              <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+                <span style={{fontSize:11,color:C.mut,fontWeight:600}}>When:</span>
+                {URGENCY.map(u=>(
+                  <div key={u.id} onClick={()=>setF({...f,urgency:u.id})}
+                    style={{padding:'3px 11px',borderRadius:20,cursor:'pointer',fontSize:11,fontWeight:700,
+                      background:f.urgency===u.id?u.col:u.bg,color:f.urgency===u.id?'#fff':u.col,
+                      border:'1px solid '+u.col+'55',transition:'all .12s'}}>
+                    {u.lbl}
+                  </div>
+                ))}
+              </div>
+              {tags.length>0&&(
+                <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+                  <span style={{fontSize:11,color:C.mut,fontWeight:600}}>Tags:</span>
+                  {tags.map(tag=>(
+                    <div key={tag.id} onClick={()=>setF(pf=>({...pf,tags:pf.tags.includes(tag.id)?pf.tags.filter(x=>x!==tag.id):[...pf.tags,tag.id]}))}
+                      style={{padding:'3px 11px',borderRadius:20,cursor:'pointer',fontSize:11,fontWeight:600,
+                        background:f.tags.includes(tag.id)?tag.color:'transparent',
+                        color:f.tags.includes(tag.id)?'#fff':C.dim,
+                        border:'1px solid '+(f.tags.includes(tag.id)?tag.color:C.brd),transition:'all .12s'}}>
+                      {tag.name}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <textarea style={{...IS(),height:44,resize:'vertical'}} placeholder="Notes (optional)…" value={f.notes} onChange={e=>setF({...f,notes:e.target.value})}/>
+            </div>
+            <div style={{display:'flex',flexDirection:'column',gap:6}}>
+              <button style={BtnA({fontSize:12,padding:'8px 16px'})} onClick={addTask}>Add Task</button>
+              <button style={BtnO({fontSize:12,padding:'7px 16px'})} onClick={()=>setShowAdd(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* tag manager */}
+      {showTagMgr&&(
+        <div style={{background:C.card,borderBottom:'1px solid '+C.brd,padding:'11px 18px',flexShrink:0}}>
+          <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',maxWidth:800}}>
+            <input style={{...IS({width:150})}} placeholder="Tag name…" value={nt.name}
+              onChange={e=>setNt({...nt,name:e.target.value})} onKeyDown={e=>e.key==='Enter'&&addTag()}/>
+            <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
+              {TAG_PAL.map(c=>(
+                <div key={c} onClick={()=>setNt({...nt,color:c})}
+                  style={{width:20,height:20,borderRadius:5,background:c,cursor:'pointer',
+                    border:`2px solid ${nt.color===c?C.txt:'transparent'}`,transition:'border .1s'}}/>
+              ))}
+            </div>
+            <button style={BtnA({fontSize:12,padding:'7px 14px'})} onClick={addTag}>+ Create Tag</button>
+            {tags.length>0&&<div style={{width:1,height:22,background:C.brd}}/>}
+            {tags.map(tag=>(
+              <div key={tag.id} style={{display:'flex',alignItems:'center',gap:5,padding:'4px 10px',borderRadius:20,background:tag.color+'18',border:'1px solid '+tag.color+'44'}}>
+                <span style={{fontSize:12,fontWeight:700,color:tag.color}}>{tag.name}</span>
+                <span onClick={()=>setTags(t=>t.filter(x=>x.id!==tag.id))} style={{cursor:'pointer',color:tag.color,fontSize:15,lineHeight:1}}>×</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* board */}
+      <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+        <div style={{flex:1,display:'flex',gap:0,overflow:'hidden',padding:'14px 14px 0'}}>
+          {[
+            {id:'todo', lbl:'To Do',       dot:C.acc, tasks:todoT},
+            {id:'doing',lbl:'In Progress', dot:C.amb, tasks:doingT},
+          ].map(col=>(
+            <KanbanCol key={col.id} col={col} tags={tags}
+              isOver={over===col.id}
+              onDragStart={id=>setDrag({id,col:col.id})}
+              onDragOver={e=>{e.preventDefault();setOver(col.id);}}
+              onDragLeave={()=>setOver(null)}
+              onDrop={()=>{if(drag&&drag.col!==col.id)moveTask(drag.id,col.id);setDrag(null);setOver(null);}}
+              onMove={moveTask} onDel={delTask}/>
+          ))}
+        </div>
+        {/* done strip */}
+        <div style={{flexShrink:0,background:C.sur,borderTop:'1px solid '+C.brd}}>
+          <div onClick={()=>setShowDone(x=>!x)}
+            style={{display:'flex',alignItems:'center',gap:8,padding:'8px 18px',cursor:'pointer',userSelect:'none'}}>
+            <span style={{fontSize:10,color:C.mut,transition:'transform .2s',display:'inline-block',transform:showDone?'rotate(90deg)':'none'}}>▶</span>
+            <span style={{fontWeight:700,fontSize:12,color:C.mut}}>Done ({done.length})</span>
+            {done.length>0&&<button onClick={e=>{e.stopPropagation();setTasks(t=>t.filter(x=>!x.done));}} style={{marginLeft:'auto',background:'none',border:'none',color:C.red,cursor:'pointer',fontSize:11,fontWeight:700}}>Clear all</button>}
+          </div>
+          {showDone&&done.length>0&&(
+            <div style={{display:'flex',gap:8,overflowX:'auto',padding:'0 14px 10px'}}>
+              {done.map(t=>(
+                <div key={t.id} style={{...Card({padding:'9px 13px',minWidth:160,maxWidth:200,flexShrink:0,opacity:.55,borderLeft:'3px solid '+C.grn})}}>
+                  <p style={{fontSize:12,color:C.dim,textDecoration:'line-through',marginBottom:5}}>{t.title}</p>
+                  <button onClick={()=>delTask(t.id)} style={{background:'none',border:'none',color:C.mut,cursor:'pointer',fontSize:11}}>Remove</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function KanbanCol({col,tags,isOver,onDragStart,onDragOver,onDragLeave,onDrop,onMove,onDel}){
+  const groups=URGENCY.map(u=>({...u,tasks:col.tasks.filter(t=>t.urgency===u.id)})).filter(g=>g.tasks.length>0);
+  const NEXT={todo:'doing',doing:'done'};
+  const PREV={doing:'todo'};
+  return(
+    <div style={{flex:1,display:'flex',flexDirection:'column',margin:'0 5px',overflow:'hidden',
+      background:isOver?C.accL:C.bg,border:'1px solid '+(isOver?C.acc:C.brd),
+      borderRadius:12,transition:'all .15s'}}
+      onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+      <div style={{padding:'12px 14px 9px',borderBottom:'1px solid '+C.brd2,flexShrink:0,display:'flex',alignItems:'center',gap:8}}>
+        <div style={{width:8,height:8,borderRadius:'50%',background:col.dot}}/>
+        <span style={{fontWeight:700,fontSize:14,color:C.txt}}>{col.lbl}</span>
+        <span style={{marginLeft:'auto',background:C.brd,color:C.mut,fontSize:10,padding:'1px 8px',borderRadius:20,fontWeight:700}}>{col.tasks.length}</span>
+      </div>
+      <div style={{flex:1,overflowY:'auto',padding:'10px'}}>
+        {col.tasks.length===0&&(
+          <div style={{display:'flex',alignItems:'center',justifyContent:'center',minHeight:100,color:C.mut,fontSize:12,border:'1px dashed '+C.brd,borderRadius:10}}>
+            Drop tasks here
+          </div>
+        )}
+        {groups.map(g=>(
+          <div key={g.id} style={{marginBottom:12}}>
+            <div style={{fontSize:10,fontWeight:800,color:g.col,letterSpacing:'1px',textTransform:'uppercase',marginBottom:6,paddingLeft:2}}>{g.lbl}</div>
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              {g.tasks.map(task=>(
+                <TaskCard key={task.id} task={task} tags={tags} colId={col.id}
+                  onDragStart={()=>onDragStart(task.id)}
+                  onForward={NEXT[col.id]?()=>onMove(task.id,NEXT[col.id]):null}
+                  onBack={PREV[col.id]?()=>onMove(task.id,PREV[col.id]):null}
+                  onDel={()=>onDel(task.id)}/>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TaskCard({task,tags,colId,onDragStart,onForward,onBack,onDel}){
+  const [hov,setHov]=useState(false);
+  const urg=URGENCY.find(u=>u.id===task.urgency)||URGENCY[3];
+  const taskTags=tags.filter(t=>task.tags?.includes(t.id));
+  return(
+    <div draggable onDragStart={onDragStart}
+      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
+      style={{...Card({padding:'11px 12px',borderLeft:`3px solid ${urg.col}`,cursor:'grab',
+        transition:'all .15s',transform:hov?'translateY(-1px)':'none',
+        boxShadow:hov?'0 4px 14px rgba(0,0,0,.08)':'none',background:hov?C.card:C.sur})}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:6}}>
+        <p style={{fontSize:13,fontWeight:600,flex:1,paddingRight:6,lineHeight:1.4,color:C.txt}}>{task.title}</p>
+        <button onClick={onDel} style={{background:'none',border:'none',color:C.mut,cursor:'pointer',fontSize:16,padding:0,opacity:hov?1:0,transition:'opacity .15s',flexShrink:0}}>×</button>
+      </div>
+      <div style={{display:'flex',gap:5,flexWrap:'wrap',alignItems:'center'}}>
+        <span style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:20,background:urg.bg,color:urg.col}}>{urg.lbl}</span>
+        {taskTags.map(tag=><span key={tag.id} style={{fontSize:10,fontWeight:600,padding:'2px 8px',borderRadius:20,background:tag.color+'18',color:tag.color}}>{tag.name}</span>)}
+      </div>
+      {task.notes&&<p style={{fontSize:11,color:C.mut,marginTop:6,lineHeight:1.5}}>{task.notes}</p>}
+      {hov&&(
+        <div style={{display:'flex',gap:5,marginTop:8}}>
+          {onBack&&<button style={BtnO({fontSize:10,padding:'3px 9px'})} onClick={onBack}>← Back</button>}
+          {onForward&&<button style={{...BtnO({fontSize:10,padding:'3px 9px'}),color:colId==='doing'?C.grn:C.acc,borderColor:colId==='doing'?C.grn:C.acc}} onClick={onForward}>{colId==='doing'?'✓ Done':'→ Start'}</button>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ══ DAY ══ */
+const START_H=6,END_H=23,HPX=70;
+const timeToY=t=>{const[h,m]=t.split(':').map(Number);return((h-START_H)+(m/60))*HPX;};
+
+function DayTab({dayBlocks,setDayBlocks,classes,setClasses,tasks}){
+  const [showAddBlk,setShowAddBlk]=useState(false);
+  const [showClsMgr,setShowClsMgr]=useState(false);
+  const [nb,setNb]=useState({title:'',startTime:'09:00',duration:60,color:BCOLS[0],note:''});
+  const [nc,setNc]=useState({title:'',day:0,startTime:'09:00',duration:60,color:C.acc});
+  const tDOW=todayDOW();
+  const todayCls=classes.filter(c=>c.day===tDOW);
+  const allItems=[
+    ...todayCls.map(c=>({...c,_cls:true})),
+    ...dayBlocks.map(b=>({...b,_cls:false})),
+  ].sort((a,b)=>a.startTime.localeCompare(b.startTime));
+
+  const addBlock=()=>{
+    if(!nb.title.trim())return;
+    setDayBlocks(b=>[...b,{id:uid(),...nb,done:false}]);
+    setNb({title:'',startTime:'09:00',duration:60,color:BCOLS[0],note:''});
+    setShowAddBlk(false);
+  };
+  const addClass=()=>{
+    if(!nc.title.trim())return;
+    setClasses(c=>[...c,{id:uid(),...nc}]);
+    setNc({title:'',day:0,startTime:'09:00',duration:60,color:C.acc});
+  };
+  const scheduleTask=t=>{
+    setNb(b=>({...b,title:t.title,note:t.notes||''}));
+    setShowAddBlk(true);
+  };
+
+  const urgentTasks=tasks.filter(t=>!t.done&&(t.urgency==='today'||t.urgency==='tomorrow'||t.col==='doing'));
+  const nowY=(()=>{const n=new Date();const h=n.getHours(),m=n.getMinutes();if(h<START_H||h>=END_H)return null;return timeToY(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`)+10;})();
+
+  return(
+    <div style={{flex:1,display:'flex',overflow:'hidden'}}>
+      {/* task sidebar */}
+      <div style={{width:220,background:C.sur,borderRight:'1px solid '+C.brd,display:'flex',flexDirection:'column',overflow:'hidden',flexShrink:0}}>
+        <div style={{padding:'13px 13px 9px',borderBottom:'1px solid '+C.brd,flexShrink:0}}>
+          <p style={{fontWeight:700,fontSize:13,color:C.txt}}>Pending Tasks</p>
+          <p style={{fontSize:11,color:C.mut,marginTop:2}}>Click + to schedule as a block</p>
+        </div>
+        <div style={{flex:1,overflowY:'auto',padding:'8px 10px'}}>
+          {urgentTasks.length===0&&<p style={{fontSize:12,color:C.mut,lineHeight:1.7}}>No urgent tasks.<br/>Add some in the Tasks tab!</p>}
+          {urgentTasks.map(t=>{
+            const urg=URGENCY.find(u=>u.id===t.urgency)||URGENCY[3];
+            return(
+              <div key={t.id} style={{...Card({padding:'9px 10px',marginBottom:7,borderLeft:'3px solid '+urg.col})}}>
+                <p style={{fontSize:12,fontWeight:600,color:C.txt,marginBottom:4,lineHeight:1.3}}>{t.title}</p>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                  <span style={{fontSize:10,fontWeight:700,color:urg.col}}>{urg.lbl}</span>
+                  <button onClick={()=>scheduleTask(t)} style={{background:C.accL,border:'none',color:C.acc,cursor:'pointer',fontSize:11,fontWeight:700,padding:'2px 8px',borderRadius:6,fontFamily:'Nunito'}}>+ Add</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{padding:'10px',borderTop:'1px solid '+C.brd,flexShrink:0,display:'flex',flexDirection:'column',gap:6}}>
+          <button style={BtnA({width:'100%',fontSize:12,padding:'7px'})} onClick={()=>setShowAddBlk(x=>!x)}>+ New Block</button>
+          <button style={BtnO({width:'100%',fontSize:12,padding:'6px'})} onClick={()=>setShowClsMgr(x=>!x)}>⚙ Manage Classes</button>
+        </div>
+      </div>
+
+      {/* timeline panel */}
+      <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+        {showAddBlk&&(
+          <div style={{background:C.sur,borderBottom:'1px solid '+C.brd,padding:'11px 16px',flexShrink:0}}>
+            <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+              <input style={{...IS({width:190})}} placeholder="Block title…" value={nb.title}
+                onChange={e=>setNb({...nb,title:e.target.value})} autoFocus onKeyDown={e=>e.key==='Enter'&&addBlock()}/>
+              <input type="time" style={{...IS({width:105})}} value={nb.startTime} onChange={e=>setNb({...nb,startTime:e.target.value})}/>
+              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                <span style={{fontSize:11,color:C.dim,whiteSpace:'nowrap'}}>{nb.duration}m</span>
+                <input type="range" min="15" max="240" step="15" value={nb.duration}
+                  onChange={e=>setNb({...nb,duration:+e.target.value})} style={{width:100}}/>
+              </div>
+              <div style={{display:'flex',gap:4}}>
+                {BCOLS.map(c=><div key={c} onClick={()=>setNb({...nb,color:c})}
+                  style={{width:20,height:20,borderRadius:5,background:c,cursor:'pointer',border:`2px solid ${nb.color===c?C.txt:'transparent'}`,transition:'border .1s'}}/>)}
+              </div>
+              <input style={{...IS({flex:1,minWidth:100})}} placeholder="Note…" value={nb.note} onChange={e=>setNb({...nb,note:e.target.value})}/>
+              <button style={BtnA({fontSize:12,padding:'7px 14px'})} onClick={addBlock}>Add</button>
+              <button style={BtnO({fontSize:12,padding:'6px 10px'})} onClick={()=>setShowAddBlk(false)}>✕</button>
+            </div>
+          </div>
+        )}
+        {showClsMgr&&(
+          <div style={{background:C.sur,borderBottom:'1px solid '+C.brd,padding:'11px 16px',flexShrink:0}}>
+            <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginBottom:10}}>
+              <input style={{...IS({width:155})}} placeholder="Class name…" value={nc.title} onChange={e=>setNc({...nc,title:e.target.value})}/>
+              <select style={{...IS({width:95})}} value={nc.day} onChange={e=>setNc({...nc,day:+e.target.value})}>
+                {WSHORT.map((d,i)=><option key={i} value={i}>{d}</option>)}
+              </select>
+              <input type="time" style={{...IS({width:100})}} value={nc.startTime} onChange={e=>setNc({...nc,startTime:e.target.value})}/>
+              <div style={{display:'flex',alignItems:'center',gap:5}}>
+                <span style={{fontSize:11,color:C.dim}}>{nc.duration}m</span>
+                <input type="range" min="30" max="180" step="15" value={nc.duration} onChange={e=>setNc({...nc,duration:+e.target.value})} style={{width:80}}/>
+              </div>
+              <div style={{display:'flex',gap:4}}>
+                {BCOLS.slice(0,5).map(c=><div key={c} onClick={()=>setNc({...nc,color:c})} style={{width:18,height:18,borderRadius:4,background:c,cursor:'pointer',border:`2px solid ${nc.color===c?C.txt:'transparent'}`}}/>)}
+              </div>
+              <button style={BtnA({fontSize:12,padding:'7px 14px'})} onClick={addClass}>Add Class</button>
+            </div>
+            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+              {classes.map(c=>(
+                <div key={c.id} style={{display:'flex',alignItems:'center',gap:6,padding:'5px 10px',borderRadius:8,background:c.color+'18',border:'1px solid '+c.color+'44'}}>
+                  <span style={{fontSize:11,fontWeight:700,color:c.color}}>{WSHORT[c.day]} {c.startTime}</span>
+                  <span style={{fontSize:11,color:C.dim}}>{c.title} ({c.duration}m)</span>
+                  <span onClick={()=>setClasses(cl=>cl.filter(x=>x.id!==c.id))} style={{cursor:'pointer',color:C.mut,fontSize:14,lineHeight:1}}>×</span>
+                </div>
+              ))}
+              {classes.length===0&&<span style={{fontSize:12,color:C.mut}}>No classes added yet.</span>}
+            </div>
+          </div>
+        )}
+        <div style={{flex:1,overflowY:'auto'}}>
+          <div style={{position:'relative',paddingBottom:20}}>
+            {Array.from({length:END_H-START_H},(_,i)=>{
+              const h=START_H+i;
+              const label=h===0?'12 am':h<12?h+' am':h===12?'12 pm':(h-12)+' pm';
+              return(
+                <div key={h} style={{height:HPX,borderTop:'1px solid '+C.brd2,display:'flex',position:'relative'}}>
+                  <span style={{fontSize:10,color:C.mut,fontWeight:600,width:50,paddingTop:4,paddingLeft:14,flexShrink:0}}>{label}</span>
+                  <div style={{flex:1,borderLeft:'1px solid '+C.brd2}}/>
+                </div>
+              );
+            })}
+            {/* now line */}
+            {nowY!==null&&(
+              <div style={{position:'absolute',top:nowY,left:50,right:0,height:2,background:C.red,zIndex:10,borderRadius:1,pointerEvents:'none'}}>
+                <div style={{width:8,height:8,background:C.red,borderRadius:'50%',position:'absolute',left:-4,top:-3}}/>
+              </div>
+            )}
+            {/* blocks */}
+            {allItems.map(b=>{
+              const[h,m]=b.startTime.split(':').map(Number);
+              if(h<START_H||h>=END_H)return null;
+              const top=timeToY(b.startTime)+0;
+              const height=Math.max((b.duration/60)*HPX-2,26);
+              return(
+                <div key={b.id} style={{position:'absolute',left:58,right:12,top,height,
+                  background:b.color+'20',border:'1px solid '+b.color+'66',
+                  borderLeft:`4px solid ${b.color}`,borderRadius:8,padding:'4px 10px',overflow:'hidden',zIndex:5}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                    <div>
+                      <p style={{fontSize:12,fontWeight:700,color:b.color,lineHeight:1.3}}>{b.title}</p>
+                      {height>38&&<p style={{fontSize:10,color:C.dim,marginTop:1}}>{b.startTime} · {b.duration}m{b._cls?' · Class':''}</p>}
+                    </div>
+                    {!b._cls&&(
+                      <button onClick={()=>setDayBlocks(bl=>bl.filter(x=>x.id!==b.id))} style={{background:'none',border:'none',color:C.mut,cursor:'pointer',fontSize:13,lineHeight:1,flexShrink:0}}>×</button>
+                    )}
+                  </div>
+                  {b.note&&height>55&&<p style={{fontSize:10,color:C.mut,marginTop:2,lineHeight:1.4}}>{b.note}</p>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══ EVENTS ══ */
+function EventsTab({events,setEvents}){
+  const [view,setView]=useState('month');
+  const [cur,setCur]=useState(todayStr());
+  const [showAdd,setShowAdd]=useState(false);
+  const [selDate,setSelDate]=useState(null);
+  const [f,setF]=useState({title:'',date:todayStr(),type:'Exam',notes:''});
+
+  const curY=+cur.slice(0,4),curM=+cur.slice(5,7)-1;
+
+  const addEvent=()=>{
+    if(!f.title.trim())return;
+    const col=EVT_COLS[f.type]||C.mut;
+    setEvents(e=>[...e,{id:uid(),...f,color:col}].sort((a,b)=>a.date.localeCompare(b.date)));
+    setF({title:'',date:selDate||todayStr(),type:'Exam',notes:''});
+    setShowAdd(false);setSelDate(null);
+  };
+  const openAdd=date=>{setSelDate(date);setF(pf=>({...pf,date}));setShowAdd(true);};
+  const shift=n=>{
+    const d=new Date(cur+'T12:00');
+    if(view==='week')d.setDate(d.getDate()+n*7);
+    else if(view==='month'){d.setDate(1);d.setMonth(d.getMonth()+n);}
+    else d.setFullYear(d.getFullYear()+n);
+    setCur(fmtDate(d));
+  };
+  const periodLabel=()=>{
+    if(view==='month')return MONTHS[curM]+' '+curY;
+    if(view==='year')return String(curY);
+    const wk=getWeekDates(cur);
+    const a=new Date(wk[0]+'T12:00'),b=new Date(wk[6]+'T12:00');
+    return `${a.getDate()} ${MSHORT[a.getMonth()]} – ${b.getDate()} ${MSHORT[b.getMonth()]} ${b.getFullYear()}`;
+  };
+
+  return(
+    <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+      <div style={{background:C.sur,borderBottom:'1px solid '+C.brd,padding:'9px 18px',display:'flex',gap:8,alignItems:'center',flexShrink:0}}>
+        <div style={{display:'flex',gap:2}}>
+          {['week','month','year'].map(v=>(
+            <button key={v} onClick={()=>setView(v)} style={{
+              background:view===v?C.acc:'transparent',color:view===v?'#fff':C.dim,
+              border:'1px solid '+(view===v?C.acc:C.brd),padding:'5px 14px',borderRadius:7,
+              cursor:'pointer',fontSize:12,fontWeight:600,fontFamily:'Nunito',
+              textTransform:'capitalize',transition:'all .15s'}}>
+              {v.charAt(0).toUpperCase()+v.slice(1)}
+            </button>
+          ))}
+        </div>
+        <button style={BtnO({padding:'5px 11px',fontSize:15})} onClick={()=>shift(-1)}>‹</button>
+        <span style={{fontWeight:700,fontSize:14,color:C.txt,minWidth:200,textAlign:'center'}}>{periodLabel()}</span>
+        <button style={BtnO({padding:'5px 11px',fontSize:15})} onClick={()=>shift(1)}>›</button>
+        <button style={BtnO({fontSize:12,padding:'5px 12px'})} onClick={()=>setCur(todayStr())}>Today</button>
+        <div style={{marginLeft:'auto',display:'flex',gap:6,alignItems:'center'}}>
+          {Object.entries(EVT_COLS).map(([k,v])=>(
+            <span key={k} style={{fontSize:10,fontWeight:600,color:v}}>{k}</span>
+          ))}
+        </div>
+        <button style={BtnA({fontSize:12,padding:'6px 14px'})} onClick={()=>openAdd(todayStr())}>+ Event</button>
+      </div>
+
+      {showAdd&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(6,50,60,.35)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:100}}>
+          <div style={{...Card({padding:22,width:380}),boxShadow:'0 20px 60px rgba(0,0,0,.15)'}}>
+            <p style={{fontWeight:800,fontSize:16,color:C.txt,marginBottom:14}}>New Event</p>
+            <input style={{...IS(),marginBottom:8}} placeholder="Event title…" value={f.title}
+              onChange={e=>setF({...f,title:e.target.value})} autoFocus onKeyDown={e=>e.key==='Enter'&&addEvent()}/>
+            <div style={{display:'flex',gap:8,marginBottom:8}}>
+              <input type="date" style={{...IS({flex:1})}} value={f.date} onChange={e=>setF({...f,date:e.target.value})}/>
+              <select style={{...IS({flex:1})}} value={f.type} onChange={e=>setF({...f,type:e.target.value})}>
+                {Object.keys(EVT_COLS).map(k=><option key={k}>{k}</option>)}
+              </select>
+            </div>
+            <textarea style={{...IS({height:54,resize:'vertical',marginBottom:12})}} placeholder="Notes…" value={f.notes} onChange={e=>setF({...f,notes:e.target.value})}/>
+            <div style={{display:'flex',gap:8}}>
+              <button style={BtnA()} onClick={addEvent}>Add Event</button>
+              <button style={BtnO()} onClick={()=>{setShowAdd(false);setSelDate(null);}}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{flex:1,overflow:'hidden'}}>
+        {view==='month'&&<MonthView y={curY} m={curM} events={events} today={todayStr()} onDayClick={openAdd} onDel={id=>setEvents(e=>e.filter(x=>x.id!==id))}/>}
+        {view==='week'&&<WeekView base={cur} events={events} today={todayStr()} onDayClick={openAdd} onDel={id=>setEvents(e=>e.filter(x=>x.id!==id))}/>}
+        {view==='year'&&<YearView y={curY} events={events} today={todayStr()} onMonth={(y,m)=>{setCur(`${y}-${String(m+1).padStart(2,'0')}-01`);setView('month');}}/>}
+      </div>
+    </div>
+  );
+}
+
+function MonthView({y,m,events,today,onDayClick,onDel}){
+  const [sel,setSel]=useState(null);
+  const dim=getDIM(y,m),first=getFirstDOW(y,m);
+  const cells=[...Array(first).fill(null),...Array.from({length:dim},(_,i)=>i+1)];
+  while(cells.length%7)cells.push(null);
+  const ds=d=>`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  return(
+    <div style={{height:'100%',display:'flex',flexDirection:'column',overflow:'hidden'}}>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',background:C.sur,borderBottom:'1px solid '+C.brd,flexShrink:0}}>
+        {WSHORT.map(d=><div key={d} style={{padding:'8px 0',textAlign:'center',fontSize:11,fontWeight:700,color:C.mut}}>{d}</div>)}
+      </div>
+      <div style={{flex:1,overflowY:'auto'}}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)'}}>
+          {cells.map((d,i)=>{
+            if(!d)return<div key={i} style={{minHeight:90,borderRight:'1px solid '+C.brd2,borderBottom:'1px solid '+C.brd2,background:'rgba(0,0,0,.015)'}}/>;
+            const date=ds(d),evs=events.filter(e=>e.date===date),isToday=date===today,isSel=sel===date;
+            return(
+              <div key={i} onClick={()=>setSel(isSel?null:date)}
+                style={{minHeight:90,borderRight:'1px solid '+C.brd2,borderBottom:'1px solid '+C.brd2,
+                  padding:'5px 6px',cursor:'pointer',background:isToday?C.accL:isSel?C.card:'transparent',transition:'background .1s'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+                  <span style={{fontSize:12,fontWeight:isToday?800:500,
+                    background:isToday?C.acc:'transparent',color:isToday?'#fff':d===6||i%7===6?C.mut:C.txt,
+                    padding:isToday?'1px 6px':'0',borderRadius:isToday?20:0,display:'inline-block'}}>
+                    {d}
+                  </span>
+                </div>
+                {evs.slice(0,3).map(ev=>(
+                  <div key={ev.id} style={{fontSize:10,fontWeight:600,padding:'2px 5px',borderRadius:4,
+                    background:ev.color+'22',color:ev.color,marginBottom:2,
+                    overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                    {ev.title}
+                  </div>
+                ))}
+                {evs.length>3&&<span style={{fontSize:9,color:C.mut}}>+{evs.length-3} more</span>}
+                {isSel&&(
+                  <div style={{marginTop:6}} onClick={e=>e.stopPropagation()}>
+                    {evs.map(ev=>(
+                      <div key={ev.id} style={{...Card({padding:'5px 8px',marginBottom:4,borderLeft:'3px solid '+ev.color})}}>
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                          <span style={{fontSize:11,fontWeight:600,color:C.txt,flex:1,paddingRight:4}}>{ev.title}</span>
+                          <button onClick={()=>onDel(ev.id)} style={{background:'none',border:'none',color:C.mut,cursor:'pointer',fontSize:13,lineHeight:1}}>×</button>
+                        </div>
+                        <span style={{fontSize:9,color:ev.color,fontWeight:700}}>{ev.type}</span>
+                      </div>
+                    ))}
+                    <button onClick={()=>onDayClick(date)} style={{...BtnA({fontSize:10,padding:'3px 10px',marginTop:4,width:'100%'})}}>+ Add event</button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WeekView({base,events,today,onDayClick,onDel}){
+  const wk=getWeekDates(base);
+  return(
+    <div style={{height:'100%',display:'flex',flexDirection:'column',overflow:'hidden'}}>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',background:C.sur,borderBottom:'1px solid '+C.brd,flexShrink:0}}>
+        {wk.map(d=>{
+          const dt=new Date(d+'T12:00'),isToday=d===today;
+          const dow=dt.getDay()===0?6:dt.getDay()-1;
+          return(
+            <div key={d} style={{padding:'10px 8px',textAlign:'center',borderRight:'1px solid '+C.brd2,background:isToday?C.accL:'transparent'}}>
+              <p style={{fontSize:10,fontWeight:600,color:C.mut,marginBottom:3}}>{WSHORT[dow]}</p>
+              <p style={{fontSize:20,fontWeight:isToday?800:600,color:isToday?C.acc:C.txt,lineHeight:1}}>{dt.getDate()}</p>
+              <p style={{fontSize:9,color:C.mut,marginTop:1}}>{MSHORT[dt.getMonth()]}</p>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{flex:1,overflowY:'auto'}}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',minHeight:380}}>
+          {wk.map(d=>{
+            const evs=events.filter(e=>e.date===d),isToday=d===today;
+            return(
+              <div key={d} onClick={()=>onDayClick(d)}
+                style={{borderRight:'1px solid '+C.brd2,padding:'10px 6px',minHeight:200,cursor:'pointer',background:isToday?C.accL:'transparent'}}>
+                {evs.map(ev=>(
+                  <div key={ev.id} style={{padding:'6px 8px',borderRadius:7,background:ev.color+'22',borderLeft:'3px solid '+ev.color,marginBottom:6}}>
+                    <div style={{display:'flex',justifyContent:'space-between',gap:4}}>
+                      <p style={{fontSize:11,fontWeight:700,color:ev.color,lineHeight:1.3,flex:1}}>{ev.title}</p>
+                      <button onClick={e=>{e.stopPropagation();onDel(ev.id);}} style={{background:'none',border:'none',color:C.mut,cursor:'pointer',fontSize:13,flexShrink:0}}>×</button>
+                    </div>
+                    <p style={{fontSize:9,color:C.dim,marginTop:2,fontWeight:600}}>{ev.type}</p>
+                    {ev.notes&&<p style={{fontSize:9,color:C.mut,marginTop:2}}>{ev.notes}</p>}
+                  </div>
+                ))}
+                {evs.length===0&&<p style={{fontSize:10,color:C.brd,textAlign:'center',marginTop:24}}>click to add</p>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function YearView({y,events,today,onMonth}){
+  return(
+    <div style={{flex:1,overflowY:'auto',padding:'18px'}}>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14}}>
+        {MONTHS.map((mName,m)=>{
+          const dim=getDIM(y,m),first=getFirstDOW(y,m);
+          const cells=[...Array(first).fill(null),...Array.from({length:dim},(_,i)=>i+1)];
+          const mEvs=events.filter(e=>+e.date.slice(0,4)===y&&+e.date.slice(5,7)===m+1);
+          return(
+            <div key={m} onClick={()=>onMonth(y,m)}
+              style={{...Card({padding:'10px 10px',cursor:'pointer',transition:'box-shadow .15s'})}}>
+              <p style={{fontWeight:700,fontSize:12,color:C.txt,marginBottom:7}}>{mName}</p>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:1,marginBottom:6}}>
+                {['M','T','W','T','F','S','S'].map((d,i)=>(
+                  <div key={i} style={{textAlign:'center',fontSize:7,color:C.mut,fontWeight:700}}>{d}</div>
+                ))}
+                {cells.map((d,i)=>{
+                  if(!d)return<div key={i}/>;
+                  const ds=`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+                  const evs=events.filter(e=>e.date===ds);
+                  const isToday=ds===today;
+                  return(
+                    <div key={i} style={{textAlign:'center',position:'relative',height:14,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                      <span style={{fontSize:8,fontWeight:isToday?800:400,color:isToday?'#fff':C.txt,
+                        background:isToday?C.acc:'transparent',borderRadius:'50%',width:12,height:12,
+                        display:'inline-flex',alignItems:'center',justifyContent:'center'}}>{d}</span>
+                      {evs.length>0&&<div style={{position:'absolute',bottom:0,left:'50%',transform:'translateX(-50%)',width:3,height:3,borderRadius:'50%',background:evs[0].color}}/>}
+                    </div>
+                  );
+                })}
+              </div>
+              {mEvs.length>0&&(
+                <div style={{borderTop:'1px solid '+C.brd2,paddingTop:5}}>
+                  {mEvs.slice(0,3).map(ev=>(
+                    <div key={ev.id} style={{fontSize:9,color:ev.color,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:2}}>· {ev.title}</div>
+                  ))}
+                  {mEvs.length>3&&<div style={{fontSize:9,color:C.mut}}>+{mEvs.length-3} more</div>}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ══ FOCUS ══ */
+function FocusTab({pDisp,pRun,setPRun,pTotal,setTimer,pDone,pLog,pRemain}){
+  const [inputMode,setInputMode]=useState(false);
+  const [inputVal,setInputVal]=useState('');
+  const R=108,circ=2*Math.PI*R;
+  const prog=pRemain.current/pTotal;
+  const offset=circ*(1-prog);
+  const mm=String(pDisp.m).padStart(2,'0');
+  const ss=String(pDisp.s).padStart(2,'0');
+  const totalMin=pLog.reduce((a,l)=>a+l.m,0);
+  const PRESETS=[5,10,15,25,30,45,60,90];
+
+  const applyInput=()=>{
+    const n=parseInt(inputVal);
+    if(n>0&&n<=480){setTimer(n*60);}
+    setInputMode(false);setInputVal('');
+  };
+
+  return(
+    <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',overflowY:'auto',padding:'24px 20px 16px'}}>
+      {/* ring */}
+      <div style={{position:'relative',width:270,height:270,marginBottom:18,flexShrink:0}}>
+        <svg width="270" height="270" style={{transform:'rotate(-90deg)'}}>
+          <circle cx="135" cy="135" r={R} fill="none" stroke={C.brd} strokeWidth="10"/>
+          <circle cx="135" cy="135" r={R} fill="none" stroke={C.acc} strokeWidth="10"
+            strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
+            style={{transition:'stroke-dashoffset 1s linear'}}/>
+        </svg>
+        <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4}}>
+          {inputMode?(
+            <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:8}}>
+              <p style={{fontSize:11,color:C.mut,fontWeight:600}}>Enter minutes</p>
+              <input type="number" min="1" max="480" autoFocus
+                style={{...IS({width:100,textAlign:'center',fontSize:32,fontWeight:800,border:'2px solid '+C.acc,background:'transparent',padding:'4px 8px'})}}
+                value={inputVal} onChange={e=>setInputVal(e.target.value)}
+                onKeyDown={e=>e.key==='Enter'&&applyInput()}/>
+              <div style={{display:'flex',gap:6}}>
+                <button style={BtnA({fontSize:11,padding:'5px 14px'})} onClick={applyInput}>Set</button>
+                <button style={BtnO({fontSize:11,padding:'4px 10px'})} onClick={()=>{setInputMode(false);setInputVal('');}}>✕</button>
+              </div>
+            </div>
+          ):(
+            <>
+              <p onClick={()=>!pRun&&setInputMode(true)}
+                style={{fontSize:56,fontWeight:800,color:C.txt,letterSpacing:'-3px',lineHeight:1,cursor:pRun?'default':'pointer',fontVariantNumeric:'tabular-nums'}}>
+                {mm}:{ss}
+              </p>
+              {!pRun&&<p style={{fontSize:10,color:C.mut,cursor:'pointer'}} onClick={()=>setInputMode(true)}>tap to set time</p>}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* presets */}
+      <div style={{display:'flex',gap:6,flexWrap:'wrap',justifyContent:'center',marginBottom:16}}>
+        {PRESETS.map(n=>(
+          <button key={n} onClick={()=>setTimer(n*60)}
+            style={{...BtnO({fontSize:11,padding:'4px 11px',borderRadius:20}),
+              background:pTotal===n*60?C.accL:'transparent',
+              color:pTotal===n*60?C.acc:C.dim,
+              borderColor:pTotal===n*60?C.acc:C.brd,
+              fontWeight:pTotal===n*60?700:400,transition:'all .15s'}}>
+            {n}m
+          </button>
+        ))}
+      </div>
+
+      {/* controls */}
+      <div style={{display:'flex',gap:12,marginBottom:20}}>
+        <button onClick={()=>setPRun(r=>!r)}
+          style={{...BtnA({padding:'11px 48px',fontSize:15,borderRadius:50}),background:pRun?C.amb:C.acc}}>
+          {pRun?'Pause':'Start'}
+        </button>
+        <button onClick={()=>setTimer(pTotal)} style={BtnO({borderRadius:50,padding:'11px 20px'})}>Reset</button>
+      </div>
+
+      {/* session dots */}
+      <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:20}}>
+        {Array.from({length:Math.max(4,pDone)},(_,i)=>(
+          <div key={i} style={{width:10,height:10,borderRadius:'50%',background:i<pDone?C.acc:C.brd,transition:'background .3s'}}/>
+        ))}
+        <span style={{fontSize:12,color:C.mut,marginLeft:4}}>{pDone} session{pDone!==1?'s':''}</span>
+        {totalMin>0&&<span style={{fontSize:12,color:C.dim,fontWeight:600}}>· {totalMin>=60?`${Math.floor(totalMin/60)}h ${totalMin%60}m`:`${totalMin}m`} focused</span>}
+      </div>
+
+      {/* log */}
+      {pLog.length>0&&(
+        <div style={{width:'100%',maxWidth:500,borderTop:'1px solid '+C.brd,paddingTop:14}}>
+          <p style={{fontSize:10,fontWeight:700,color:C.mut,letterSpacing:'1px',textTransform:'uppercase',marginBottom:10}}>Today's Sessions</p>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+            {[...pLog].reverse().map((l,i)=>(
+              <div key={i} style={{...Card({padding:'8px 14px',display:'flex',gap:10,alignItems:'center'})}}>
+                <div style={{width:6,height:6,borderRadius:'50%',background:C.acc,flexShrink:0}}/>
+                <span style={{fontSize:12,fontWeight:700,color:C.txt}}>{l.m}m</span>
+                <span style={{fontSize:11,color:C.mut}}>{l.t}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {pLog.length===0&&(
+        <p style={{fontSize:12,color:C.mut,marginTop:6}}>Start a session to begin tracking your focus time.</p>
+      )}
+    </div>
+  );
+}
+
+/* ══ SHARED ══ */
+function Pill({label,color,active,onClick}){
+  return(
+    <div onClick={onClick} style={{padding:'3px 12px',borderRadius:20,cursor:'pointer',fontSize:11,fontWeight:600,
+      background:active?color:'transparent',color:active?'#fff':color,
+      border:'1px solid '+color+'55',transition:'all .13s'}}>
+      {label}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
