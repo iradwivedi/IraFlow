@@ -173,6 +173,7 @@ function TasksTab({tasks,setTasks,tags,setTags,tagFilters,setTagFilters,urgFilte
     setTasks(t=>[{id:uid(),...f,col:'todo',done:false,ts:Date.now()},...t]);
     setF({title:'',tags:[],urgency:'today',notes:''});setShowAdd(false);
   };
+  const updateTask=(id, updates)=>setTasks(ts=>ts.map(t=>t.id===id?{...t,...updates}:t));
   const addTag=()=>{
     if(!nt.name.trim())return;
     setTags(t=>[...t,{id:uid(),...nt}]);setNt({name:'',color:TAG_PAL[0]});
@@ -292,7 +293,7 @@ function TasksTab({tasks,setTasks,tags,setTags,tagFilters,setTagFilters,urgFilte
               onDragOver={e=>{e.preventDefault();setOver(col.id);}}
               onDragLeave={()=>setOver(null)}
               onDrop={()=>{if(drag&&drag.col!==col.id)moveTask(drag.id,col.id);setDrag(null);setOver(null);}}
-              onMove={moveTask} onDel={delTask}/>
+              onMove={moveTask} onDel={delTask} onUpdate={updateTask}/>
           ))}
         </div>
         {/* done strip */}
@@ -301,7 +302,7 @@ function TasksTab({tasks,setTasks,tags,setTags,tagFilters,setTagFilters,urgFilte
             style={{display:'flex',alignItems:'center',gap:8,padding:'8px 18px',cursor:'pointer',userSelect:'none'}}>
             <span style={{fontSize:10,color:C.mut,transition:'transform .2s',display:'inline-block',transform:showDone?'rotate(90deg)':'none'}}>▶</span>
             <span style={{fontWeight:700,fontSize:12,color:C.mut}}>Done ({done.length})</span>
-            {done.length>0&&<button onClick={e=>{e.stopPropagation();setTasks(t=>t.filter(x=>!x.done));}} style={{marginLeft:'auto',background:'none',border:'none',color:C.red,cursor:'pointer',fontSize:11,fontWeight:700}}>Clear all</button>}
+            {done.length>0&&<button onClick={e=>{e.stopPropagation();setTasks(t=>t.filter(x!x.done));}} style={{marginLeft:'auto',background:'none',border:'none',color:C.red,cursor:'pointer',fontSize:11,fontWeight:700}}>Clear all</button>}
           </div>
           {showDone&&done.length>0&&(
             <div style={{display:'flex',gap:8,overflowX:'auto',padding:'0 14px 10px'}}>
@@ -319,7 +320,7 @@ function TasksTab({tasks,setTasks,tags,setTags,tagFilters,setTagFilters,urgFilte
   );
 }
 
-function KanbanCol({col,tags,isOver,onDragStart,onDragOver,onDragLeave,onDrop,onMove,onDel}){
+function KanbanCol({col,tags,isOver,onDragStart,onDragOver,onDragLeave,onDrop,onMove,onDel,onUpdate}){
   const groups=URGENCY.map(u=>({...u,tasks:col.tasks.filter(t=>t.urgency===u.id)})).filter(g=>g.tasks.length>0);
   const NEXT={todo:'doing',doing:'done'};
   const PREV={doing:'todo'};
@@ -348,7 +349,8 @@ function KanbanCol({col,tags,isOver,onDragStart,onDragOver,onDragLeave,onDrop,on
                   onDragStart={()=>onDragStart(task.id)}
                   onForward={NEXT[col.id]?()=>onMove(task.id,NEXT[col.id]):null}
                   onBack={PREV[col.id]?()=>onMove(task.id,PREV[col.id]):null}
-                  onDel={()=>onDel(task.id)}/>
+                  onDel={()=>onDel(task.id)}
+                  onUpdate={onUpdate}/>
               ))}
             </div>
           </div>
@@ -358,18 +360,27 @@ function KanbanCol({col,tags,isOver,onDragStart,onDragOver,onDragLeave,onDrop,on
   );
 }
 
-function TaskCard({task,tags,colId,onDragStart,onForward,onBack,onDel}){
+function TaskCard({task,tags,colId,onDragStart,onForward,onBack,onDel,onUpdate}){
   const [hov,setHov]=useState(false);
+  const [edit,setEdit]=useState(false);
+  const [val,setVal]=useState(task.title);
   const urg=URGENCY.find(u=>u.id===task.urgency)||URGENCY[3];
   const taskTags=tags.filter(t=>task.tags?.includes(t.id));
+
+  const save=()=>{onUpdate(task.id,{title:val});setEdit(false);};
+
   return(
-    <div draggable onDragStart={onDragStart}
+    <div draggable={!edit} onDragStart={onDragStart}
       onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
-      style={{...Card({padding:'11px 12px',borderLeft:`3px solid ${urg.col}`,cursor:'grab',
+      style={{...Card({padding:'11px 12px',borderLeft:`3px solid ${urg.col}`,cursor:edit?'default':'grab',
         transition:'all .15s',transform:hov?'translateY(-1px)':'none',
         boxShadow:hov?'0 4px 14px rgba(0,0,0,.08)':'none',background:hov?C.card:C.sur})}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:6}}>
-        <p style={{fontSize:13,fontWeight:600,flex:1,paddingRight:6,lineHeight:1.4,color:C.txt}}>{task.title}</p>
+        {edit ? (
+          <input style={IS({padding:'2px 4px',fontSize:13})} value={val} onChange={e=>setVal(e.target.value)} onBlur={save} onKeyDown={e=>e.key==='Enter'&&save()} autoFocus />
+        ) : (
+          <p onClick={()=>setEdit(true)} style={{fontSize:13,fontWeight:600,flex:1,paddingRight:6,lineHeight:1.4,color:C.txt,cursor:'text'}}>{task.title}</p>
+        )}
         <button onClick={onDel} style={{background:'none',border:'none',color:C.mut,cursor:'pointer',fontSize:16,padding:0,opacity:hov?1:0,transition:'opacity .15s',flexShrink:0}}>×</button>
       </div>
       <div style={{display:'flex',gap:5,flexWrap:'wrap',alignItems:'center'}}>
@@ -408,6 +419,15 @@ function DayTab({dayBlocks,setDayBlocks,classes,setClasses,tasks}){
     setDayBlocks(b=>[...b,{id:uid(),...nb,done:false}]);
     setNb({title:'',startTime:'09:00',duration:60,color:BCOLS[0],note:''});
     setShowAddBlk(false);
+  };
+  const moveBlock=(id, mins)=>{
+    setDayBlocks(bs=>bs.map(b=>{
+      if(b.id!==id)return b;
+      let [h,m] = b.startTime.split(':').map(Number);
+      let total = h*60 + m + mins;
+      let nh = Math.floor(total/60), nm = total%60;
+      return {...b, startTime: `${String(nh).padStart(2,'0')}:${String(nm).padStart(2,'0')}`};
+    }));
   };
   const addClass=()=>{
     if(!nc.title.trim())return;
@@ -537,7 +557,11 @@ function DayTab({dayBlocks,setDayBlocks,classes,setClasses,tasks}){
                       {height>38&&<p style={{fontSize:10,color:C.dim,marginTop:1}}>{b.startTime} · {b.duration}m{b._cls?' · Class':''}</p>}
                     </div>
                     {!b._cls&&(
-                      <button onClick={()=>setDayBlocks(bl=>bl.filter(x=>x.id!==b.id))} style={{background:'none',border:'none',color:C.mut,cursor:'pointer',fontSize:13,lineHeight:1,flexShrink:0}}>×</button>
+                      <div style={{display:'flex',gap:4}}>
+                        <button onClick={()=>moveBlock(b.id, -15)} style={BtnO({padding:'0 5px',fontSize:10})}>↑</button>
+                        <button onClick={()=>moveBlock(b.id, 15)} style={BtnO({padding:'0 5px',fontSize:10})}>↓</button>
+                        <button onClick={()=>setDayBlocks(bl=>bl.filter(x=>x.id!==b.id))} style={{background:'none',border:'none',color:C.mut,cursor:'pointer',fontSize:13,lineHeight:1,flexShrink:0}}>×</button>
+                      </div>
                     )}
                   </div>
                   {b.note&&height>55&&<p style={{fontSize:10,color:C.mut,marginTop:2,lineHeight:1.4}}>{b.note}</p>}
@@ -799,7 +823,7 @@ function FocusTab({pDisp,pRun,setPRun,pTotal,setTimer,pDone,pLog,pRemain}){
   const mm=String(pDisp.m).padStart(2,'0');
   const ss=String(pDisp.s).padStart(2,'0');
   const totalMin=pLog.reduce((a,l)=>a+l.m,0);
-  const PRESETS=[5,10,15,25,30,45,60,90];
+  const PRESETS=[15,25,30,45,60,75,90];
 
   const applyInput=()=>{
     const n=parseInt(inputVal);
@@ -833,7 +857,7 @@ function FocusTab({pDisp,pRun,setPRun,pTotal,setTimer,pDone,pLog,pRemain}){
           ):(
             <>
               <p onClick={()=>!pRun&&setInputMode(true)}
-                style={{fontSize:56,fontWeight:800,color:C.txt,letterSpacing:'-3px',lineHeight:1,cursor:pRun?'default':'pointer',fontVariantNumeric:'tabular-nums'}}>
+                style={{fontSize: pRun ? 84 : 56, fontWeight:800, color:C.txt, letterSpacing:'-3px', lineHeight:1, cursor:pRun?'default':'pointer', fontVariantNumeric:'tabular-nums', transition:'all 0.5s ease', textShadow: pRun ? `0 0 20px ${C.acc}44` : 'none'}}>
                 {mm}:{ss}
               </p>
               {!pRun&&<p style={{fontSize:10,color:C.mut,cursor:'pointer'}} onClick={()=>setInputMode(true)}>tap to set time</p>}
