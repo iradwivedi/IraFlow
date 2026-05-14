@@ -76,17 +76,30 @@ const Card=(x={})=>({background:C.sur,border:'1px solid '+C.brd,borderRadius:12,
 
 function App(){
   const [tab,setTab]=useState('tasks');
+  const [tick, setTick]=useState(0);
+
+  // Background wake listener to keep time accurate without reloading
+  useEffect(() => {
+    const handleVis = () => {
+      if(document.visibilityState === 'visible') setTick(t => t + 1);
+    };
+    document.addEventListener('visibilitychange', handleVis);
+    return () => document.removeEventListener('visibilitychange', handleVis);
+  }, []);
+
   const td=todayStr();
+  const tm=(()=>{const d=new Date();d.setDate(d.getDate()+1);return fmtDate(d);})();
 
   const [tasks,setTasks]=useState(()=>st.get('tasks')||[]);
   const [tags,setTags]=useState(()=>st.get('tags')||[]);
   const [tagFilters,setTagFilters]=useState([]);
   const [urgFilter,setUrgFilter]=useState(null);
 
-  // Day Rollover logic
+  // Day Rollover logic triggered on mount AND on background wake
   useEffect(() => {
+    const currentTd = todayStr();
     const lastVisit = localStorage.getItem('iraf_last_visit');
-    if (lastVisit && lastVisit !== td) {
+    if (lastVisit && lastVisit !== currentTd) {
       setTasks(prev => prev.map(t => {
         if (t.done) return t;
         if (t.urgency === 'today') return { ...t, urgency: 'overdue' };
@@ -94,19 +107,33 @@ function App(){
         return t;
       }));
     }
-    localStorage.setItem('iraf_last_visit', td);
-  }, [td]);
+    localStorage.setItem('iraf_last_visit', currentTd);
+  }, [tick]);
 
   useEffect(()=>st.set('tasks',tasks),[tasks]);
   useEffect(()=>st.set('tags',tags),[tags]);
 
   const [dayBlocks,setDayBlocks]=useState(()=>st.get('db_'+td)||[]);
+  const [dayBlocksTom,setDayBlocksTom]=useState(()=>st.get('db_'+tm)||[]);
   const [classes,setClasses]=useState(()=>st.get('classes')||[]);
-  useEffect(()=>st.set('db_'+td,dayBlocks),[dayBlocks]);
+
+  useEffect(()=>st.set('db_'+td,dayBlocks),[dayBlocks, td]);
+  useEffect(()=>st.set('db_'+tm,dayBlocksTom),[dayBlocksTom, tm]);
   useEffect(()=>st.set('classes',classes),[classes]);
+
+  // If a midnight crossing happens via visibility tick, re-pull daily states
+  useEffect(() => {
+    setDayBlocks(st.get('db_'+td) || []);
+    setDayBlocksTom(st.get('db_'+tm) || []);
+    setPDone(st.get('pd_'+td) || 0);
+    setPLog(st.get('pl_'+td) || []);
+  }, [td, tm]);
 
   const [events,setEvents]=useState(()=>st.get('events')||[]);
   useEffect(()=>st.set('events',events),[events]);
+
+  const [stickyNotes, setStickyNotes]=useState(()=>st.get('sticky')||[]);
+  useEffect(()=>st.set('sticky',stickyNotes),[stickyNotes]);
 
   const [pTotal,setPTotal]=useState(25*60);
   const pRemain=useRef(25*60);
@@ -115,15 +142,21 @@ function App(){
   const [pDone,setPDone]=useState(()=>st.get('pd_'+td)||0);
   const [pLog,setPLog]=useState(()=>st.get('pl_'+td)||[]);
   const pTimer=useRef(null);
-  useEffect(()=>st.set('pd_'+td,pDone),[pDone]);
-  useEffect(()=>st.set('pl_'+td,pLog),[pLog]);
+  
+  useEffect(()=>st.set('pd_'+td,pDone),[pDone, td]);
+  useEffect(()=>st.set('pl_'+td,pLog),[pLog, td]);
 
+  // High precision timer: works perfectly even when tab is backgrounded
   useEffect(()=>{
     if(pRun){
+      const targetTime = Date.now() + pRemain.current * 1000;
       pTimer.current=setInterval(()=>{
-        pRemain.current=Math.max(0,pRemain.current-1);
-        setPDisp({m:Math.floor(pRemain.current/60),s:pRemain.current%60});
-        if(pRemain.current===0){
+        const now = Date.now();
+        const diff = Math.max(0, Math.round((targetTime - now)/1000));
+        pRemain.current = diff;
+        setPDisp({m:Math.floor(diff/60),s:diff%60});
+        
+        if(diff===0){
           clearInterval(pTimer.current);setPRun(false);
           setPDone(n=>n+1);
           setPLog(l=>[...l,{t:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),m:Math.round(pTotal/60)}]);
@@ -141,7 +174,14 @@ function App(){
     setPDisp({m:Math.floor(secs/60),s:secs%60});
   };
 
-  const TABS=[{id:'tasks',lbl:'Tasks'},{id:'day',lbl:'Day'},{id:'events',lbl:'Events'},{id:'focus',lbl:'Focus'}];
+  const TABS=[
+    {id:'tasks',lbl:'Tasks'},
+    {id:'day',lbl:'Day'},
+    {id:'events',lbl:'Events'},
+    {id:'sticky',lbl:'Sticky Notes'},
+    {id:'focus',lbl:'Focus'}
+  ];
+  
   return(
     <div style={{height:'100vh',display:'flex',flexDirection:'column',overflow:'hidden'}}>
       <header style={{background:C.acc,display:'flex',alignItems:'center',padding:'0 20px',height:50,flexShrink:0,gap:16}}>
@@ -165,8 +205,9 @@ function App(){
       </header>
       <div style={{flex:1,overflow:'hidden',display:'flex'}}>
         {tab==='tasks'  && <TasksTab tasks={tasks} setTasks={setTasks} tags={tags} setTags={setTags} tagFilters={tagFilters} setTagFilters={setTagFilters} urgFilter={urgFilter} setUrgFilter={setUrgFilter}/>}
-        {tab==='day'    && <DayTab dayBlocks={dayBlocks} setDayBlocks={setDayBlocks} classes={classes} setClasses={setClasses} tasks={tasks}/>}
+        {tab==='day'    && <DayTab dayBlocks={dayBlocks} setDayBlocks={setDayBlocks} dayBlocksTom={dayBlocksTom} setDayBlocksTom={setDayBlocksTom} classes={classes} setClasses={setClasses} tasks={tasks} tick={tick}/>}
         {tab==='events' && <EventsTab events={events} setEvents={setEvents}/>}
+        {tab==='sticky' && <StickyNotesTab notes={stickyNotes} setNotes={setStickyNotes}/>}
         {tab==='focus'  && <FocusTab pDisp={pDisp} pRun={pRun} setPRun={setPRun} pTotal={pTotal} setTimer={setTimer} pDone={pDone} pLog={pLog} pRemain={pRemain}/>}
       </div>
     </div>
@@ -426,28 +467,84 @@ function TaskCard({task,tags,colId,onDragStart,onForward,onBack,onDel,onUpdate})
   );
 }
 
+/* ══ STICKY NOTES ══ */
+function StickyNotesTab({notes, setNotes}) {
+  const [nn, setNn] = useState({title:'', body:'', color: TAG_PAL[3]});
+
+  const addNote = () => {
+    if(!nn.body.trim() && !nn.title.trim()) return;
+    setNotes(n => [{id:uid(), ...nn, ts:Date.now()}, ...n]);
+    setNn({...nn, title:'', body:''});
+  };
+
+  return (
+    <div style={{flex:1, display:'flex', flexDirection:'column', overflow:'hidden'}}>
+      <div style={{background:C.sur, borderBottom:'1px solid '+C.brd, padding:'12px 18px', flexShrink:0, display:'flex', gap:10, alignItems:'flex-start', flexWrap:'wrap'}}>
+        <div style={{display:'flex', flexDirection:'column', gap:6, flex:1, minWidth:260, maxWidth:400}}>
+           <input style={IS()} placeholder="Title (optional)..." value={nn.title} onChange={e=>setNn({...nn, title:e.target.value})} onKeyDown={e=>e.key==='Enter'&&addNote()}/>
+           <textarea style={{...IS(), height:56, resize:'vertical'}} placeholder="Take a note..." value={nn.body} onChange={e=>setNn({...nn, body:e.target.value})} />
+        </div>
+        <div style={{display:'flex', flexDirection:'column', gap:8}}>
+          <div style={{display:'flex', gap:4, flexWrap:'wrap', width: 90}}>
+            {TAG_PAL.slice(0, 8).map(c=>(
+              <div key={c} onClick={()=>setNn({...nn, color:c})} style={{width:18, height:18, borderRadius:4, background:c, cursor:'pointer', border:`2px solid ${nn.color===c?C.txt:'transparent'}`, transition:'border .1s'}}/>
+            ))}
+          </div>
+          <button style={BtnA({fontSize:12, padding:'7px 14px'})} onClick={addNote}>+ Add Note</button>
+        </div>
+      </div>
+      <div style={{flex:1, overflowY:'auto', padding:'18px', display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(220px, 1fr))', gap:16, alignContent:'flex-start'}}>
+        {notes.map(note => (
+          <div key={note.id} style={{...Card({padding:'12px 14px', background: note.color+'15', border:'1px solid '+note.color+'40', borderTop:`4px solid ${note.color}`, position:'relative'})}}>
+             <button onClick={()=>setNotes(ns=>ns.filter(x=>x.id!==note.id))} style={{position:'absolute', top:6, right:8, background:'none', border:'none', color:C.mut, cursor:'pointer', fontSize:16, lineHeight:1}}>×</button>
+             {note.title && <p style={{fontSize:13, fontWeight:700, color:C.txt, marginBottom:6, paddingRight:14}}>{note.title}</p>}
+             <p style={{fontSize:12, color:C.dim, whiteSpace:'pre-wrap', lineHeight:1.5}}>{note.body}</p>
+          </div>
+        ))}
+        {notes.length === 0 && <p style={{fontSize:13, color:C.mut, gridColumn:'1/-1', textAlign:'center', marginTop:40}}>No sticky notes yet.</p>}
+      </div>
+    </div>
+  );
+}
+
 /* ══ DAY ══ */
-const START_H=0,END_H=24,HPX=70;
+const START_H=0,END_H=24,HPX=100;
 const timeToY=t=>{const[h,m]=t.split(':').map(Number);return((h-START_H)+(m/60))*HPX;};
 
-function DayTab({dayBlocks,setDayBlocks,classes,setClasses,tasks}){
+function DayTab({dayBlocks,setDayBlocks,dayBlocksTom,setDayBlocksTom,classes,setClasses,tasks,tick}){
+  const [isTom, setIsTom] = useState(false);
   const [showAddBlk,setShowAddBlk]=useState(false);
   const [showClsMgr,setShowClsMgr]=useState(false);
   const [nb,setNb]=useState({title:'',startTime:'09:00',duration:60,color:BCOLS[0],note:''});
   const [nc,setNc]=useState({title:'',day:0,startTime:'09:00',duration:60,color:C.acc});
   const scrollRef=useRef(null);
   
-  const tDOW=todayDOW();
-  const todayCls=classes.filter(c=>c.day===tDOW);
+  const activeBlocks = isTom ? dayBlocksTom : dayBlocks;
+  const setActiveBlocks = isTom ? setDayBlocksTom : setDayBlocks;
+
+  const tDOW = todayDOW();
+  const targetDOW = isTom ? (tDOW === 6 ? 0 : tDOW + 1) : tDOW;
+  const targetCls = classes.filter(c=>c.day===targetDOW);
+
   const allItems=[
-    ...todayCls.map(c=>({...c,_cls:true})),
-    ...dayBlocks.map(b=>({...b,_cls:false})),
+    ...targetCls.map(c=>({...c,_cls:true})),
+    ...activeBlocks.map(b=>({...b,_cls:false})),
   ].sort((a,b)=>a.startTime.localeCompare(b.startTime));
+
+  const getRoundedTime = () => {
+    const d = new Date();
+    let h = d.getHours(), m = d.getMinutes();
+    if (m < 8) m = 0;
+    else if (m < 23) m = 15;
+    else if (m < 38) m = 30;
+    else if (m < 53) m = 45;
+    else { m = 0; h = (h + 1) % 24; }
+    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  };
 
   const addBlock=()=>{
     if(!nb.title.trim())return;
-    setDayBlocks(b=>[...b,{id:uid(),...nb,done:false}]);
-    setNb({title:'',startTime:'09:00',duration:60,color:BCOLS[0],note:''});
+    setActiveBlocks(b=>[...b,{id:uid(),...nb,done:false}]);
     setShowAddBlk(false);
   };
   const addClass=()=>{
@@ -456,11 +553,11 @@ function DayTab({dayBlocks,setDayBlocks,classes,setClasses,tasks}){
     setNc({title:'',day:0,startTime:'09:00',duration:60,color:C.acc});
   };
   const scheduleTask=t=>{
-    setNb(b=>({...b,title:t.title,note:t.notes||''}));
+    setNb({title:t.title, note:t.notes||'', startTime:getRoundedTime(), duration:60, color:BCOLS[0]});
     setShowAddBlk(true);
   };
   const moveBlock = (id, mins) => {
-    setDayBlocks(bs => bs.map(b => {
+    setActiveBlocks(bs => bs.map(b => {
       if (b.id !== id) return b;
       let [h, m] = b.startTime.split(':').map(Number);
       let total = h * 60 + m + mins;
@@ -472,18 +569,31 @@ function DayTab({dayBlocks,setDayBlocks,classes,setClasses,tasks}){
   };
 
   const urgentTasks=tasks.filter(t=>!t.done&&(t.urgency==='today'||t.urgency==='overdue'||t.urgency==='tomorrow'||t.col==='doing'));
-  const nowY=(()=>{const n=new Date();const h=n.getHours(),m=n.getMinutes();if(h<START_H||h>=END_H)return null;return timeToY(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`)+10;})();
+  
+  const nowY=useMemo(()=>{
+    if(isTom) return null;
+    const n=new Date();const h=n.getHours(),m=n.getMinutes();
+    if(h<START_H||h>=END_H)return null;
+    return timeToY(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`);
+  }, [tick, isTom]);
 
   useEffect(() => {
     if (scrollRef.current && nowY !== null) {
       scrollRef.current.scrollTop = Math.max(0, nowY - (scrollRef.current.clientHeight / 2));
     }
-  }, []);
+  }, [isTom]);
 
   return(
     <div style={{flex:1,display:'flex',overflow:'hidden'}}>
       {/* task sidebar */}
       <div style={{width:220,background:C.sur,borderRight:'1px solid '+C.brd,display:'flex',flexDirection:'column',overflow:'hidden',flexShrink:0}}>
+        
+        {/* Toggle */}
+        <div style={{display:'flex', gap:6, padding:'10px 13px', borderBottom:'1px solid '+C.brd, background:C.sur, flexShrink:0}}>
+          <button onClick={()=>setIsTom(false)} style={{...BtnO({padding:'5px 0', flex:1, fontSize:12, fontWeight:700, background:!isTom?C.acc:'transparent', color:!isTom?'#fff':C.dim, borderColor:!isTom?C.acc:C.brd})}}>Today</button>
+          <button onClick={()=>setIsTom(true)} style={{...BtnO({padding:'5px 0', flex:1, fontSize:12, fontWeight:700, background:isTom?C.acc:'transparent', color:isTom?'#fff':C.dim, borderColor:isTom?C.acc:C.brd})}}>Tomorrow</button>
+        </div>
+
         <div style={{padding:'13px 13px 9px',borderBottom:'1px solid '+C.brd,flexShrink:0}}>
           <p style={{fontWeight:700,fontSize:13,color:C.txt}}>Pending Tasks</p>
           <p style={{fontSize:11,color:C.mut,marginTop:2}}>Click + to schedule as a block</p>
@@ -504,7 +614,7 @@ function DayTab({dayBlocks,setDayBlocks,classes,setClasses,tasks}){
           })}
         </div>
         <div style={{padding:'10px',borderTop:'1px solid '+C.brd,flexShrink:0,display:'flex',flexDirection:'column',gap:6}}>
-          <button style={BtnA({width:'100%',fontSize:12,padding:'7px'})} onClick={()=>setShowAddBlk(x=>!x)}>+ New Block</button>
+          <button style={BtnA({width:'100%',fontSize:12,padding:'7px'})} onClick={()=>{setNb(prev=>({...prev, startTime:getRoundedTime()})); setShowAddBlk(x=>!x);}}>+ New Block</button>
           <button style={BtnO({width:'100%',fontSize:12,padding:'6px'})} onClick={()=>setShowClsMgr(x=>!x)}>⚙ Manage Classes</button>
         </div>
       </div>
@@ -583,7 +693,7 @@ function DayTab({dayBlocks,setDayBlocks,classes,setClasses,tasks}){
             {allItems.map(b=>{
               const[h,m]=b.startTime.split(':').map(Number);
               if(h<START_H||h>=END_H)return null;
-              const top=timeToY(b.startTime)+0;
+              const top=timeToY(b.startTime);
               const height=Math.max((b.duration/60)*HPX-2,26);
               return(
                 <div key={b.id} style={{position:'absolute',left:58,right:12,top,height,
@@ -598,7 +708,7 @@ function DayTab({dayBlocks,setDayBlocks,classes,setClasses,tasks}){
                       <div style={{display:'flex',gap:2,flexShrink:0,alignItems:'center'}}>
                         <button onClick={()=>moveBlock(b.id, -15)} style={{background:C.sur,border:'1px solid '+b.color+'55',color:b.color,cursor:'pointer',fontSize:10,width:18,height:18,borderRadius:4,display:'flex',alignItems:'center',justifyContent:'center'}} title="Move up 15m">↑</button>
                         <button onClick={()=>moveBlock(b.id, 15)} style={{background:C.sur,border:'1px solid '+b.color+'55',color:b.color,cursor:'pointer',fontSize:10,width:18,height:18,borderRadius:4,display:'flex',alignItems:'center',justifyContent:'center'}} title="Move down 15m">↓</button>
-                        <button onClick={()=>setDayBlocks(bl=>bl.filter(x=>x.id!==b.id))} style={{background:'none',border:'none',color:C.mut,cursor:'pointer',fontSize:13,lineHeight:1,marginLeft:4,paddingBottom:2}}>×</button>
+                        <button onClick={()=>setActiveBlocks(bl=>bl.filter(x=>x.id!==b.id))} style={{background:'none',border:'none',color:C.mut,cursor:'pointer',fontSize:13,lineHeight:1,marginLeft:4,paddingBottom:2}}>×</button>
                       </div>
                     )}
                   </div>
